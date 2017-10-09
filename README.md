@@ -1,2 +1,2 @@
 # Deep-learning
-深度学习
+学习深度学习
