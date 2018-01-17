@@ -1,0 +1,130 @@
+import tensorflow as tf
+import numpy as np
+import random
+import copy
+
+BatchSize      = 10
+BatchNumb      = 10000
+TimeSteps      = 40
+
+Hang           = 1
+Channel_Num    = 1
+
+#HiddenLength   = BatchSize*BatchNumb*TimeSteps+2
+#HiddenElements = [5,3,7]
+
+#### For RNN ########################
+input_node   = Channel_Num
+output_node  = 4        # 4分类
+time_steps   = TimeSteps
+batch_size   = BatchSize
+hidden_units = 256
+self_output_node = output_node
+
+#### Create Data #####################
+def get_one_hot(targets, nb_classes):
+    return np.eye(nb_classes)[np.array(targets).reshape(-1)]
+
+def HMM_seq1(HiddenLength,HiddenElements=[5,3,7]):
+    HiddenSeq = []
+    ShowSeq   = []
+    for i in range(HiddenLength):
+        HiddenSeq.append(random.choice(HiddenElements))
+    for note in range(len(HiddenSeq)-2):
+        Add_3 = HiddenSeq[note] + HiddenSeq[note+1] + HiddenSeq[note+2]
+        ShowSeq.append(Add_3)
+    HiddenSeq = HiddenSeq [2:]
+    return HiddenSeq,ShowSeq
+
+def HMM_seq2(BatchSize,BatchNumb,TimeSteps):
+    HiddenLength   = BatchSize*BatchNumb*TimeSteps+2
+    HiddenElements = [5,3,7]    
+    HiddenSeq2,ShowSeq = HMM_seq1(HiddenLength,HiddenElements)  
+    HiddenSeq3 = copy.deepcopy(HiddenSeq2)
+    for i in range(len(HiddenSeq2)):
+        if HiddenSeq2[i] == HiddenElements[0]:
+                   HiddenSeq2[i] = 1
+        elif HiddenSeq2[i] == HiddenElements[1]:
+                   HiddenSeq2[i] = 2
+        elif HiddenSeq2[i] == HiddenElements[2]:
+                   HiddenSeq2[i] = 3 
+    HiddenClass = np.array(HiddenSeq2)
+    HiddenClass_onehot = get_one_hot(HiddenClass, len(HiddenElements)+1)
+    
+    Axis_x    = np.arange(0,HiddenLength-2)
+    HiddenSeq = np.array(HiddenSeq3)
+    ShowSeq   = np.array(ShowSeq)
+    
+    return HiddenClass_onehot,ShowSeq,HiddenClass,HiddenSeq
+
+def Layer_LSTM_keep_none(input_tensor,input_node,self_output_node,hidden_units,time_steps,batch_size,name):
+###  用于 Regression  等于 return_sequences = True
+    with tf.variable_scope("L_LSTM_Regression_none_%s"%name):
+        with tf.name_scope('inputs'):
+            weights_in = tf.Variable(tf.random_normal([input_node, hidden_units]))
+            biases_in  = tf.Variable(tf.constant(0.1, shape=[hidden_units, ]))
+            X          = tf.reshape(input_tensor, [-1, input_node])       
+            X_in       = tf.matmul(X, weights_in) + biases_in      
+            X_in       = tf.reshape(X_in, [-1,time_steps, hidden_units])        
+        with tf.name_scope('RNNCell'):
+            lstm_cell  = tf.contrib.rnn.BasicLSTMCell(hidden_units)      
+            init_state = lstm_cell.zero_state(batch_size, dtype=tf.float32)      
+            outputs, final_state = tf.nn.dynamic_rnn(lstm_cell, X_in, initial_state=init_state, time_major=False)        
+        with tf.name_scope('outputs'):
+            weights_out = tf.Variable(tf.random_normal([hidden_units, self_output_node]))
+            biases_out  = tf.Variable(tf.constant(0.1, shape=[self_output_node, ]))
+            outputs     = tf.reshape(outputs, [-1, hidden_units])
+            result      = tf.matmul(outputs, weights_out) + biases_out      
+        tf.summary.scalar('output', result)          
+    return result
+
+######  Deep Network Structure ##################################
+with tf.name_scope('inputs'):
+    x    = tf.placeholder(tf.float32,shape=(None, time_steps, input_node), name="inputX")
+    y    = tf.placeholder(tf.float32,shape=(None, output_node),name="inputY")
+
+Layer1 = Layer_LSTM_keep_none(x,input_node,self_output_node,hidden_units,time_steps,batch_size,name=1)
+
+with tf.name_scope('loss_'):
+    cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=Layer1,labels=tf.argmax(y,1))
+    loss          = tf.reduce_mean(cross_entropy)
+
+with tf.name_scope('train'):
+    training      = tf.train.AdamOptimizer(0.001).minimize(loss)
+    
+with tf.name_scope('accuracy'):
+    with tf.name_scope('correct_prediction'):
+        correct_prediction = tf.equal(tf.argmax(Layer1,1),tf.argmax(y,1))
+    with tf.name_scope('accuracy'):
+        accuracy           = tf.reduce_mean(tf.cast(correct_prediction,tf.float32))
+        tf.summary.scalar('accuracy', accuracy)
+
+########### Tensorboard ##################
+"""
+sess = tf.Session()
+init = tf.global_variables_initializer()
+sess.run(init)
+merged = tf.summary.merge_all()
+writer = tf.summary.FileWriter("/tmp/Mofan/log011705",sess.graph)
+writer.close()
+print ("tensorboard --logdir=\tmp\Mofan\log011705")
+"""
+#############################
+training_step  = 100
+with tf.Session() as sess:
+    init_op = tf.global_variables_initializer()
+    sess.run(init_op)
+    for steps in range (training_step):
+        HiddenClass_onehot,ShowSeq,HiddenClass,HiddenSeq = HMM_seq2(BatchSize,BatchNumb,TimeSteps)
+        xs = ShowSeq.reshape((BatchNumb,BatchSize,time_steps, input_node))
+        ys = HiddenClass_onehot.reshape((BatchNumb,BatchSize*time_steps, output_node))
+        for batch in range(BatchNumb):
+            sess.run(training,feed_dict={x:xs[batch],y:ys[batch]})
+            if batch % 1000 == 0:
+                accuracy_value = sess.run(accuracy,feed_dict={x:xs[batch],y:ys[batch]})
+                print ("After %d train batch_steps, accuracy_value is: "%(batch), accuracy_value)
+
+
+
+
+
